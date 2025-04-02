@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Chess Game</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0,0,0,0.7);
+            padding: 5px;
+            z-index: 100;
+        }
+        #turn {
+            position: absolute;
+            top: 50px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            background-color: rgba(0,0,0,0.7);
+            padding: 5px;
+            z-index: 100;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">3D Chess Game - Click a piece to select, then click a square to move</div>
+    <div id="turn">Turn: White</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <script>
+        // Chess Game State
+        const EMPTY = 0;
+        const WHITE_PAWN = 1, WHITE_KNIGHT = 2, WHITE_BISHOP = 3, WHITE_ROOK = 4, WHITE_QUEEN = 5, WHITE_KING = 6;
+        const BLACK_PAWN = 7, BLACK_KNIGHT = 8, BLACK_BISHOP = 9, BLACK_ROOK = 10, BLACK_QUEEN = 11, BLACK_KING = 12;
+        
+        // Game state
+        let board = [];
+        let turn = 'white';
+        let selectedPiece = null;
+        let selectedSquare = null;
+        let hoveredSquare = null;
+        
+        // Three.js variables
+        let scene, camera, renderer, raycaster, mouse;
+        let chessboard = new THREE.Group();
+        let pieces = new THREE.Group();
+        let boardSquares = [];
+        let pieceObjects = {};
+        let meshes = {}; // Store model meshes to reuse them
+        
+        // Initialize the board with pieces
+        function initializeBoard() {
+            // Initialize empty board
+            for (let i = 0; i < 8; i++) {
+                board[i] = [];
+                for (let j = 0; j < 8; j++) {
+                    board[i][j] = EMPTY;
+                }
+            }
+            
+            // Set up pawns
+            for (let i = 0; i < 8; i++) {
+                board[i][1] = WHITE_PAWN;
+                board[i][6] = BLACK_PAWN;
+            }
+            
+            // Set up other pieces
+            board[0][0] = WHITE_ROOK;
+            board[1][0] = WHITE_KNIGHT;
+            board[2][0] = WHITE_BISHOP;
+            board[3][0] = WHITE_QUEEN;
+            board[4][0] = WHITE_KING;
+            board[5][0] = WHITE_BISHOP;
+            board[6][0] = WHITE_KNIGHT;
+            board[7][0] = WHITE_ROOK;
+            
+            board[0][7] = BLACK_ROOK;
+            board[1][7] = BLACK_KNIGHT;
+            board[2][7] = BLACK_BISHOP;
+            board[3][7] = BLACK_QUEEN;
+            board[4][7] = BLACK_KING;
+            board[5][7] = BLACK_BISHOP;
+            board[6][7] = BLACK_KNIGHT;
+            board[7][7] = BLACK_ROOK;
+        }
+        
+        // Initialize Three.js scene
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x333333);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 10, 10);
+            camera.lookAt(3.5, 0, 3.5);
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 20, 10);
+            scene.add(directionalLight);
+            
+            // Raycaster for mouse interaction
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            // Create chessboard and pieces
+            createChessboard();
+            initializeBoard();
+            createPieces();
+            
+            scene.add(chessboard);
+            scene.add(pieces);
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('click', onClick);
+            window.addEventListener('mousemove', onMouseMove);
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Create the chessboard
+        function createChessboard() {
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    const color = (i + j) % 2 === 0 ? 0xeeeeee : 0x555555;
+                    const geometry = new THREE.BoxGeometry(1, 0.1, 1);
+                    const material = new THREE.MeshStandardMaterial({ color });
+                    const square = new THREE.Mesh(geometry, material);
+                    
+                    square.position.set(i, 0, j);
+                    square.userData = { type: 'square', x: i, z: j };
+                    
+                    boardSquares.push(square);
+                    chessboard.add(square);
+                }
+            }
+            
+            // Add a base under the board
+            const baseGeometry = new THREE.BoxGeometry(9, 0.5, 9);
+            const baseMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+            const base = new THREE.Mesh(baseGeometry, baseMaterial);
+            base.position.set(3.5, -0.3, 3.5);
+            chessboard.add(base);
+        }
+        
+        // Create simple geometric chess pieces
+        function createPieces() {
+            for (let i = 0; i < 8; i++) {
+                for (let j = 0; j < 8; j++) {
+                    if (board[i][j] !== EMPTY) {
+                        createPiece(i, j, board[i][j]);
+                    }
+                }
+            }
+        }
+        
+        // Create a single piece
+        function createPiece(x, y, pieceType) {
+            let geometry, material, piece;
+            const isWhite = pieceType < 7;
+            const color = isWhite ? 0xfafafa : 0x222222;
+            
+            // Create model based on piece type
+            switch (pieceType % 6) {
+                case 1: // Pawn
+                    if (!meshes.pawn) {
+                        geometry = new THREE.CylinderGeometry(0.2, 0.25, 0.5, 12);
+                        meshes.pawn = geometry;
+                    }
+                    material = new THREE.MeshStandardMaterial({ color });
+                    piece = new THREE.Mesh(meshes.pawn, material);
+                    piece.position.y = 0.25;
+                    break;
+                case 2: // Knight
+                    if (!meshes.knight) {
+                        // Create a simple knight shape
+                        const group = new THREE.Group();
+                        
+                        // Base
+                        const base = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.25, 0.3, 0.2, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        base.position.y = 0.1;
+                        group.add(base);
+                        
+                        // Body
+                        const body = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.2, 0.25, 0.4, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        body.position.y = 0.4;
+                        group.add(body);
+                        
+                        // Head
+                        const head = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.25, 0.25, 0.5),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        head.position.set(0, 0.7, 0.1);
+                        head.rotation.x = Math.PI / 6;
+                        group.add(head);
+                        
+                        meshes.knight = group;
+                    }
+                    
+                    piece = meshes.knight.clone();
+                    break;
+                case 3: // Bishop
+                    if (!meshes.bishop) {
+                        geometry = new THREE.ConeGeometry(0.25, 0.8, 12);
+                        meshes.bishop = geometry;
+                    }
+                    material = new THREE.MeshStandardMaterial({ color });
+                    piece = new THREE.Mesh(meshes.bishop, material);
+                    piece.position.y = 0.4;
+                    break;
+                case 4: // Rook
+                    if (!meshes.rook) {
+                        const group = new THREE.Group();
+                        
+                        // Base
+                        const base = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.3, 0.3, 0.6, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        base.position.y = 0.3;
+                        group.add(base);
+                        
+                        // Top
+                        const top = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.5, 0.2, 0.5),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        top.position.y = 0.7;
+                        group.add(top);
+                        
+                        meshes.rook = group;
+                    }
+                    
+                    piece = meshes.rook.clone();
+                    break;
+                case 5: // Queen
+                    if (!meshes.queen) {
+                        const group = new THREE.Group();
+                        
+                        // Base
+                        const base = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.3, 0.35, 0.3, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        base.position.y = 0.15;
+                        group.add(base);
+                        
+                        // Body
+                        const body = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.25, 0.3, 0.5, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        body.position.y = 0.55;
+                        group.add(body);
+                        
+                        // Crown
+                        const crown = new THREE.Mesh(
+                            new THREE.SphereGeometry(0.2, 12, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        crown.position.y = 0.9;
+                        group.add(crown);
+                        
+                        meshes.queen = group;
+                    }
+                    
+                    piece = meshes.queen.clone();
+                    break;
+                case 0: // King
+                    if (!meshes.king) {
+                        const group = new THREE.Group();
+                        
+                        // Base
+                        const base = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.3, 0.35, 0.3, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        base.position.y = 0.15;
+                        group.add(base);
+                        
+                        // Body
+                        const body = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.25, 0.3, 0.5, 12),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        body.position.y = 0.55;
+                        group.add(body);
+                        
+                        // Crown
+                        const crown = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.25, 0.3, 0.25),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        crown.position.y = 0.9;
+                        group.add(crown);
+                        
+                        // Cross
+                        const cross1 = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.1, 0.25, 0.1),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        cross1.position.y = 1.17;
+                        group.add(cross1);
+                        
+                        const cross2 = new THREE.Mesh(
+                            new THREE.BoxGeometry(0.25, 0.1, 0.1),
+                            new THREE.MeshStandardMaterial({ color })
+                        );
+                        cross2.position.y = 1.17;
+                        group.add(cross2);
+                        
+                        meshes.king = group;
+                    }
+                    
+                    piece = meshes.king.clone();
+                    break;
+            }
+            
+            piece.position.set(x, piece.position.y, y);
+            piece.userData = { type: 'piece', pieceType, x, z: y };
+            
+            // Store reference to the piece
+            const key = `${x}-${y}`;
+            pieceObjects[key] = piece;
+            
+            pieces.add(piece);
+            return piece;
+        }
+        
+        // Move a piece
+        function movePiece(fromX, fromY, toX, toY) {
+            const pieceType = board[fromX][fromY];
+            const fromKey = `${fromX}-${fromY}`;
+            const toKey = `${toX}-${toY}`;
+            
+            // If there is a piece in the destination, remove it
+            if (board[toX][toY] !== EMPTY) {
+                const capturedPiece = pieceObjects[toKey];
+                pieces.remove(capturedPiece);
+                delete pieceObjects[toKey];
+            }
+            
+            // Update the board array
+            board[toX][toY] = pieceType;
+            board[fromX][fromY] = EMPTY;
+            
+            // Get the piece object
+            const piece = pieceObjects[fromKey];
+            
+            // Animate the move
+            new TWEEN.Tween(piece.position)
+                .to({ x: toX, z: toY }, 300)
+                .easing(TWEEN.Easing.Quadratic.Out)
+                .start();
+            
+            // Update the piece's position and key
+            piece.userData.x = toX;
+            piece.userData.z = toY;
+            delete pieceObjects[fromKey];
+            pieceObjects[toKey] = piece;
+            
+            // Switch turns
+            turn = turn === 'white' ? 'black' : 'white';
+            document.getElementById('turn').textContent = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+            
+            // Reset selection
+            selectedPiece = null;
+            if (selectedSquare) {
+                resetSquareColor(selectedSquare);
+                selectedSquare = null;
+            }
+        }
+        
+        // Check if move is valid (simplified chess rules)
+        function isValidMove(pieceType, fromX, fromY, toX, toY) {
+            // Cannot move to a square with same color piece
+            const targetPiece = board[toX][toY];
+            const isWhitePiece = pieceType < 7;
+            const isWhiteTarget = targetPiece !== EMPTY && targetPiece < 7;
+            
+            if (targetPiece !== EMPTY && (isWhitePiece === isWhiteTarget)) {
+                return false;
+            }
+            
+            // Check specific piece movement rules
+            const dx = toX - fromX;
+            const dy = toY - fromY;
+            
+            switch (pieceType) {
+                case WHITE_PAWN:
+                    // Can move forward 1 square (or 2 from start position)
+                    if (dx === 0 && targetPiece === EMPTY && (dy === 1 || (dy === 2 && fromY === 1 && board[fromX][fromY + 1] === EMPTY))) {
+                        return true;
+                    }
+                    // Can capture diagonally
+                    if ((dx === 1 || dx === -1) && dy === 1 && targetPiece !== EMPTY && targetPiece >= 7) {
+                        return true;
+                    }
+                    return false;
+                
+                case BLACK_PAWN:
+                    // Can move forward 1 square (or 2 from start position)
+                    if (dx === 0 && targetPiece === EMPTY && (dy === -1 || (dy === -2 && fromY === 6 && board[fromX][fromY - 1] === EMPTY))) {
+                        return true;
+                    }
+                    // Can capture diagonally
+                    if ((dx === 1 || dx === -1) && dy === -1 && targetPiece !== EMPTY && targetPiece < 7) {
+                        return true;
+                    }
+                    return false;
+                
+                case WHITE_KNIGHT:
+                case BLACK_KNIGHT:
+                    // Knights move in L-shape
+                    return (Math.abs(dx) === 2 && Math.abs(dy) === 1) || (Math.abs(dx) === 1 && Math.abs(dy) === 2);
+                
+                case WHITE_BISHOP:
+                case BLACK_BISHOP:
+                    // Bishops move diagonally
+                    if (Math.abs(dx) !== Math.abs(dy)) {
+                        return false;
+                    }
+                    
+                    // Check if the path is clear
+                    const xStep = dx > 0 ? 1 : -1;
+                    const yStep = dy > 0 ? 1 : -1;
+                    for (let i = 1; i < Math.abs(dx); i++) {
+                        if (board[fromX + i * xStep][fromY + i * yStep] !== EMPTY) {
+                            return false;
+                        }
+                    }
+                    return true;
+                
+                case WHITE_ROOK:
+                case BLACK_ROOK:
+                    // Rooks move horizontally or vertically
+                    if (dx !== 0 && dy !== 0) {
+                        return false;
+                    }
+                    
+                    // Check if the path is clear
+                    if (dx === 0) {
+                        const step = dy > 0 ? 1 : -1;
+                        for (let i = 1; i < Math.abs(dy); i++) {
+                            if (board[fromX][fromY + i * step] !== EMPTY) {
+                                return false;
+                            }
+                        }
+                    } else {
+                        const step = dx > 0 ? 1 : -1;
+                        for (let i = 1; i < Math.abs(dx); i++) {
+                            if (board[fromX + i * step][fromY] !== EMPTY) {
+                                return false;
+                            }
+                        }
+                    }
+                    return true;
+                
+                case WHITE_QUEEN:
+                case BLACK_QUEEN:
+                    // Queens move like bishops or rooks
+                    if (dx === 0 || dy === 0) {
+                        // Horizontal or vertical movement
+                        if (dx === 0) {
+                            const step = dy > 0 ? 1 : -1;
+                            for (let i = 1; i < Math.abs(dy); i++) {
+                                if (board[fromX][fromY + i * step] !== EMPTY) {
+                                    return false;
+                                }
+                            }
+                        } else {
+                            const step = dx > 0 ? 1 : -1;
+                            for (let i = 1; i < Math.abs(dx); i++) {
+                                if (board[fromX + i * step][fromY] !== EMPTY) {
+                                    return false;
+                                }
+                            }
+                        }
+                        return true;
+                    } else if (Math.abs(dx) === Math.abs(dy)) {
+                        // Diagonal movement
+                        const xStep = dx > 0 ? 1 : -1;
+                        const yStep = dy > 0 ? 1 : -1;
+                        for (let i = 1; i < Math.abs(dx); i++) {
+                            if (board[fromX + i * xStep][fromY + i * yStep] !== EMPTY) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                    return false;
+                
+                case WHITE_KING:
+                case BLACK_KING:
+                    // Kings move one square in any direction
+                    return Math.abs(dx) <= 1 && Math.abs(dy) <= 1;
+            }
+            
+            return false;
+        }
+        
+        // Handle click events
+        function onClick(event) {
+            event.preventDefault();
+            
+            // Calculate mouse position in normalized device coordinates
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Raycast to find intersected objects
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersects = raycaster.intersectObjects([...boardSquares, ...Object.values(pieceObjects)], true);
+            
+            if (intersects.length > 0) {
+                // Find the first object with userData
+                let object = intersects[0].object;
+                while (object && !object.userData) {
+                    object = object.parent;
+                }
+                
+                if (!object || !object.userData) return;
+                
+                // Handle clicking on a piece
+                if (object.userData.type === 'piece') {
+                    const pieceType = object.userData.pieceType;
+                    const isWhitePiece = pieceType < 7;
+                    
+                    // Only allow selecting own pieces
+                    if ((turn === 'white' && isWhitePiece) || (turn === 'black' && !isWhitePiece)) {
+                        // If there was a previously selected piece, reset its material
+                        if (selectedPiece) {
+                            if (selectedSquare) {
+                                resetSquareColor(selectedSquare);
+                                selectedSquare = null;
+                            }
+                        }
+                        
+                        // Select the new piece
+                        selectedPiece = {
+                            piece: object,
+                            x: object.userData.x,
+                            z: object.userData.z,
+                            pieceType
+                        };
+                        
+                        // Highlight the square under the selected piece
+                        const squareIndex = object.userData.x * 8 + object.userData.z;
+                        selectedSquare = boardSquares[squareIndex];
+                        highlightSquare(selectedSquare, 0x00ff00);
+                    }
+                }
+                // Handle clicking on a square
+                else if (object.userData.type === 'square') {
+                    // If a piece is already selected, try to move it
+                    if (selectedPiece) {
+                        const toX = object.userData.x;
+                        const toZ = object.userData.z;
+                        const fromX = selectedPiece.x;
+                        const fromZ = selectedPiece.z;
+                        
+                        // Check if the move is valid
+                        if (isValidMove(selectedPiece.pieceType, fromX, fromZ, toX, toZ)) {
+                            movePiece(fromX, fromZ, toX, toZ);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Handle mouse move events for hover effects
+        function onMouseMove(event) {
+            event.preventDefault();
+            
+            // Calculate mouse position in normalized device coordinates
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Raycast to find intersected objects
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersects = raycaster.intersectObjects(boardSquares, false);
+            
+            // Reset previous hover effect
+            if (hoveredSquare && hoveredSquare !== selectedSquare) {
+                resetSquareColor(hoveredSquare);
+            }
+            
+            hoveredSquare = null;
+            
+            if (intersects.length > 0) {
+                const square = intersects[0].object;
+                
+                // Don't apply hover effect to the selected square
+                if (square !== selectedSquare) {
+                    hoveredSquare = square;
+                    
+                    // If a piece is selected, check if it can move to this square
+                    if (selectedPiece) {
+                        const toX = square.userData.x;
+                        const toZ = square.userData.z;
+                        
+                        if (isValidMove(selectedPiece.pieceType, selectedPiece.x, selectedPiece.z, toX, toZ)) {
+                            highlightSquare(square, 0xffff00); // Valid move
+                        } else {
+                            highlightSquare(square, 0xff0000); // Invalid move
+                        }
+                    } else {
+                        highlightSquare(square, 0x0000ff); // No piece selected
+                    }
+                }
+            }
+        }
+        
+        // Highlight a square with a color
+        function highlightSquare(square, color) {
+            square.material.emissive.setHex(color);
+            square.material.emissiveIntensity = 0.5;
+        }
+        
+        // Reset square color
+        function resetSquareColor(square) {
+            square.material.emissive.setHex(0x000000);
+            square.material.emissiveIntensity = 0;
+        }
+        
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            TWEEN.update();
+            renderer.render(scene, camera);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>
